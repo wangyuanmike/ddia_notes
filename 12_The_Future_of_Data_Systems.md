@@ -155,14 +155,19 @@
 - Such coordination-avoiding data systems can achieve better performance and fault tolerance than systems that need to perform synchronous coordination
 - For example, such a system could operate distributed across multiple datacenters in a multi-leader configuration, asynchronously replicating between regions. Any one datacenter can continue operating independently from the others, because no synchronous cross-region coordination is required. Such a system wourld have weak timelines guarantees, but it can still have strong integrity guarantees.
 - In this context, serializable transactiosn are still useful as part of maintaining derived state, but they can be run at a small scope where they work well. Heterogeneous distributed transactiosn such as XA transactions are not required. Synchronous coordination can still be introduced in places where it is needed (for example, to enforce strict constraints before an operation from which recovery is not possible), but there is no need for everything to pay the cost of coordination if only a small part of an application needs it.
-- 
-
 
 ### Trust, but Verify
 #### Maintaining integrity in the face of software bugs
 #### Don't just blindly trust what they promise
 #### A culture of verification
 #### Desinging for auditability
+- If a transaction mutates several objects in a database, it is difficult to tell after the fact what that transaction means. Even if you capture the transaction logs, the insertions, updates, and deletions in various tables do not necessarily give a clear picture of why those mutations were performed. The invocation of the application logic that decided on those mutations is transient and cannot be reproduced.
+- By contrast, Event-based systems can provide better auditability. In the event sourcing approach, user input to the system is represented as a single immutable event, and any resulting state updates are derived from that event. The derivation can be made deterministic and repeatable, so that running the same log of events through the same version of the derivation code will result in the same state updates.
+- Being explicit about dataflow makes the provenance of data much clearer., which makes integrity checking much more feasible. For the event log, we can use hashes to check that the event storage has not be corrupted. For any derived state, we can rerun the batch and stream processors that derived it from the event log in order to check whether we get the same result, or even run a redundant derivation in parallel.
+- A deterministic and well-defined dataflow also makes it easier to debug and trace the execution of a system in order to determine why it did something. If something unexpected occurred, it is valuable to have the diagnostic capability to reproduce the exact circumstances that led to the unexpected event - a kind of time-travel debugging capability.
 #### The end-to-end argument again
 #### Tools for auditable data systems
+- Merkle Tree
+- Certificate transparency
+- Distributed ledgers
 

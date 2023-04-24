@@ -91,12 +91,78 @@
 - In the dataflow approach, the code that processes purchases would subsribe to a stream of exchange rate updated ahead of time, and record the current rate in a local database whenever it changes. That's why it would never require to run a sync REST API call to get the current rate. (Loose coupling, async, better performance, fewer dependency)
 
 ### Observing Derived State
-- The boundary between the write path and the read path of derived data
+- The boundary between the write path and the read path of derived data is the storage
 - Take an analogy with functional programming, the write path is similar to eager evaluation, and the read path is similar to lazy evalation
 #### Materialized views and caching
-
+- The role of caches, indexes, and materialized views is simple: they shift the boundary between the read path and the write path
 #### Stateful, offline-capable clients
-#### Pusing state changes to clients
+- We can think of the on-device state as a cache of state on the server
+#### Pushing state changes to clients
+- In terms of our model of write path and read path, actively pushing state changes all the way to client devices means extending the write path all the way to the end user
+- To solve the "device offline" problem, a consumer of a log-based message broker can reconnect after failing or becoming disconnected, and ensure that it doesn't miss any messages that arrived while it was disconnected
 #### End-to-end event streams
+- Keep in mind thte option of subscribing to changes, not just querying the current state
 #### Reads are events too
+- It is also possible to represent read requests as sterams of events, and send both the read events and the write events through a stream processor; the processor responds to read events by emitting the result of the read to an output stream
+- When both the writes and the reads are represented as events, and routed to the same stream operator in order to be handled, we are in fact performing a stream-table join betweeen the stream of read queris and database
+- A one-off read request just passes the request through the join operator and then immediately forgets it; a subscribe request is a persistent join with past and future events on the other side of the join
+- Writing read events to durable storage thus enables better tracking of causal dependencies
 #### Multi-partition data processing
+- This idea of "sending queries through a stream and collecting a stream of responses" opens the possibility of distributed execution of complex queries that need to combine data from several partitions, taking advantage of the infrastructure for message routing, partitioning, and joining that is already provided by stream processors.
+
+## Aiming for Correctness
+### The End-to-End Argument for Databases
+- The low-level reliability features are not by themselves sufficient to ensure end-to-end correctness
+- Transactions are expensive, especially when they involve heterogeneous storage technologies
+#### Exactly-once execution of an operation
+- Idempotence
+#### Duplicate suppression
+#### Operation identifiers
+- Add request id to suppress duplicate, which is similar with event sourcing 
+#### The end-to-end argument
+#### Applying end-to-end thinking in data systems
+
+### Enforcing Constraints
+- Apart from adding request id, another way to suppress duplication is to add "uniqueness constraint"
+- There are also other kinds of constraints
+#### Uniqueness constraints require consensus
+- The most common way of achieving the consensus is to make a single node the leader, and put it in charge of making all th e decisions
+- If you need usernames to be unique, you can partition by hash of username
+#### Uniqueness in log-based messaging
+- It scales easily to a large request throughtput by increasing the number of partitions, as each partition can be processed independently
+- The approach works not only for uniqueness constraints, but also for many other kinds of constraints
+- Its fundamental principle is that any writes that may conflict are routed to the same partition and processsed sequentially 
+#### Multi-partition request processing
+- It turns out that equivalent correctness (namely without an atomic commit across all three partitions) can be achieved with partitioned logs, and without an atomic commit:
+	- The request to transfer money from account A to account B is given a unique request ID by the client, and appended to a log partition based on the request ID
+	- A stream processor reads the log of requests. For each request message it emits two messages to output streams: a debit instruction to the payer account A (partitioned by A), and a credit instruction to the payer account B (partitioned by B). The original request ID is included in those emitted messages
+	- Further processors consume the streams of credit and debit instructions, deduplicate by request ID, and apply the changes to the account balances
+- By breaking down the multi-partition transaction into two differently partitioned stages and using the end-to-end request ID, we have achieved the same correctness property, even in the presence of faults, and without using an atomic commit protocol. 
+
+### Timeliness and Integrity
+- Violations of timeliness are "eventual consistency", whereas violations of integrity are "perpetual inconsistency"
+#### Correctness of dataflow systems
+- We achieved this integrity through a combination of mechanisms:
+	- Representing the content of the write operation as a single message, which can easily be written atomically - an approach that fits very well with event sourcing
+	- Deriving all other state update from that single message using deterministic derivation fuctions, similarly to stored procedures
+	- Passing a client-generated request ID through all these levels of processing, enabling end-to-end duplicate suppression and idempotence
+	- Making messages immutable and allowing derived data to be reprocessed from time to time, which makes it easier to recover from bugs 
+#### Loosely interpreted constraints
+- Many real applications can actually get away with much weaker notinons of uniqueness
+- In many business conetxts, it is actually acceptable to temporarily violate a constraint and fix it up later by apologizing
+- These application do requrie integrity, but they do not require timeliness on the enforcement of the constraint
+#### Coordination-avoiding data systems
+- Such coordination-avoiding data systems can achieve better performance and fault tolerance than systems that need to perform synchronous coordination
+- For example, such a system could operate distributed across multiple datacenters in a multi-leader configuration, asynchronously replicating between regions. Any one datacenter can continue operating independently from the others, because no synchronous cross-region coordination is required. Such a system wourld have weak timelines guarantees, but it can still have strong integrity guarantees.
+- In this context, serializable transactiosn are still useful as part of maintaining derived state, but they can be run at a small scope where they work well. Heterogeneous distributed transactiosn such as XA transactions are not required. Synchronous coordination can still be introduced in places where it is needed (for example, to enforce strict constraints before an operation from which recovery is not possible), but there is no need for everything to pay the cost of coordination if only a small part of an application needs it.
+- 
+
+
+### Trust, but Verify
+#### Maintaining integrity in the face of software bugs
+#### Don't just blindly trust what they promise
+#### A culture of verification
+#### Desinging for auditability
+#### The end-to-end argument again
+#### Tools for auditable data systems
+
